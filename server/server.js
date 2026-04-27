@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const multer = require('multer');
+const ImageAndDescriptionHandler = require('./image_and_description_input_handler');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -52,15 +53,13 @@ function sendProblem(res, status, title, detail) {
   });
 }
 
-// In-memory storage for demonstration
-const uploadedData = {
-  images: [],
-  descriptions: [],
-  titles: [],
-  processing: {
-    status: 'idle',
-    progress: 0
-  }
+// Initialize file system storage handler
+const storageHandler = new ImageAndDescriptionHandler('./uploads');
+
+// Processing state
+const processingState = {
+  status: 'idle',
+  progress: 0
 };
 
 // Parse OpenAPI paths and register routes
@@ -80,17 +79,30 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           res.status(200).json({ status: 'operational', message: 'API is healthy' });
         } else if (pathPattern === '/process-images') {
           // Get processing progress
+          const stats = storageHandler.getStatistics();
           res.status(200).json({
-            status: uploadedData.processing.status,
-            progress: uploadedData.processing.progress,
-            message: `Processing ${uploadedData.images.length} images`
+            status: processingState.status,
+            progress: processingState.progress,
+            message: `Processing ${stats.totalItems} images`,
+            itemsReady: stats.completeItems,
+            itemsIncomplete: stats.incompleteItems
           });
         } else if (pathPattern === '/processing-result') {
           // Retrieve processing result
-          if (uploadedData.processing.status === 'completed') {
+          if (processingState.status === 'completed') {
+            const completeItems = storageHandler.getCompleteItems();
+            const results = completeItems.map(item => ({
+              id: item.id,
+              title: item.title,
+              description: item.description,
+              originalImageName: item.originalName,
+              imagePath: `/api/images/${item.id}` // API endpoint to retrieve image
+            }));
+
             res.status(200).json({
-              text: 'Generated story from your images and descriptions.',
-              images: uploadedData.images.map((_, idx) => `https://api.server.test/v1/processed-image-${idx}`)
+              text: results.map(r => `${r.title}: ${r.description}`).join(' | '),
+              images: results,
+              count: results.length
             });
           } else {
             sendProblem(res, 404, 'Not Found', 'Processing has not been completed yet');
@@ -123,12 +135,22 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
               return sendProblem(res, 400, 'Bad Request', 'No images provided');
             }
 
-            uploadedData.images = req.files.map(f => f.originalname);
-            console.log(`Uploaded ${req.files.length} images`);
-            res.status(200).json({
-              message: `Successfully uploaded ${req.files.length} images`,
-              count: req.files.length
-            });
+            try {
+              const storedImages = storageHandler.storeImages(req.files);
+              res.status(200).json({
+                message: `Successfully uploaded and stored ${req.files.length} images`,
+                count: req.files.length,
+                items: storedImages.map(img => ({
+                  id: img.id,
+                  originalName: img.originalName,
+                  size: img.size,
+                  mimeType: img.mimeType,
+                  uploadedAt: img.uploadedAt
+                }))
+              });
+            } catch (storageError) {
+              return sendProblem(res, 500, 'Internal Server Error', 'Failed to store images: ' + storageError.message);
+            }
           });
           return;
         } else if (pathPattern === '/upload-descriptions') {
@@ -137,39 +159,56 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
             return sendProblem(res, 400, 'Bad Request', 'descriptions field is required and must be an array');
           }
 
-          uploadedData.descriptions = req.body.descriptions;
-          console.log(`Uploaded ${req.body.descriptions.length} descriptions`);
-          res.status(200).json({
-            message: `Successfully uploaded ${req.body.descriptions.length} descriptions`,
-            count: req.body.descriptions.length
-          });
+          try {
+            const result = storageHandler.storeDescriptions(req.body.descriptions);
+            res.status(200).json({
+              message: `Successfully processed ${req.body.descriptions.length} descriptions`,
+              count: req.body.descriptions.length,
+              stored: result.stored,
+              failed: result.failed,
+              errors: result.errors.length > 0 ? result.errors : undefined
+            });
+          } catch (storageError) {
+            return sendProblem(res, 400, 'Bad Request', storageError.message);
+          }
         } else if (pathPattern === '/upload-titles') {
           // Handle JSON titles
           if (!req.body.titles || !Array.isArray(req.body.titles)) {
             return sendProblem(res, 400, 'Bad Request', 'titles field is required and must be an array');
           }
 
-          uploadedData.titles = req.body.titles;
-          console.log(`Uploaded ${req.body.titles.length} titles`);
-          res.status(200).json({
-            message: `Successfully uploaded ${req.body.titles.length} titles`,
-            count: req.body.titles.length
-          });
+          try {
+            const result = storageHandler.storeTitles(req.body.titles);
+            res.status(200).json({
+              message: `Successfully processed ${req.body.titles.length} titles`,
+              count: req.body.titles.length,
+              stored: result.stored,
+              failed: result.failed,
+              errors: result.errors.length > 0 ? result.errors : undefined
+            });
+          } catch (storageError) {
+            return sendProblem(res, 400, 'Bad Request', storageError.message);
+          }
         } else if (pathPattern === '/process-images') {
           // Start image processing
-          if (uploadedData.processing.status === 'processing') {
+          if (processingState.status === 'processing') {
             return sendProblem(res, 409, 'Conflict', 'Processing is already in progress');
           }
 
-          uploadedData.processing.status = 'processing';
-          uploadedData.processing.progress = 0;
+          const completeItems = storageHandler.getCompleteItems();
+          if (completeItems.length === 0) {
+            return sendProblem(res, 400, 'Bad Request', 'No complete items (images with titles and descriptions) available for processing');
+          }
+
+          processingState.status = 'processing';
+          processingState.progress = 0;
 
           // Simulate processing
           const processingInterval = setInterval(() => {
-            uploadedData.processing.progress += 20;
-            if (uploadedData.processing.progress >= 100) {
-              uploadedData.processing.status = 'completed';
-              uploadedData.processing.progress = 100;
+            processingState.progress += 20;
+            if (processingState.progress >= 100) {
+              processingState.status = 'completed';
+              processingState.progress = 100;
               clearInterval(processingInterval);
               console.log('Image processing completed');
             }
@@ -177,7 +216,8 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
           res.status(202).json({
             message: 'Processing started',
-            status: 'processing'
+            status: 'processing',
+            itemsBeingProcessed: completeItems.length
           });
         } else {
           sendProblem(res, 404, 'Not Found', `Endpoint ${pathPattern} not implemented`);
@@ -197,13 +237,15 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
       try {
         if (pathPattern === '/upload-images') {
-          // Abort image upload
-          uploadedData.images = [];
-          res.status(200).json({ message: 'Upload aborted successfully' });
+          // Abort image upload (clear all stored data)
+          storageHandler.clearAll();
+          processingState.status = 'idle';
+          processingState.progress = 0;
+          res.status(200).json({ message: 'All uploads cleared successfully' });
         } else if (pathPattern === '/process-images') {
           // Abort image processing
-          uploadedData.processing.status = 'idle';
-          uploadedData.processing.progress = 0;
+          processingState.status = 'idle';
+          processingState.progress = 0;
           res.status(200).json({ message: 'Processing aborted successfully' });
         } else {
           sendProblem(res, 404, 'Not Found', `Endpoint ${pathPattern} not implemented`);
