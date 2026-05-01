@@ -3,10 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const yaml = require('js-yaml');
 const multer = require('multer');
-<<<<<<< HEAD
 const ImageAndDescriptionHandler = require('./image_and_description_input_handler');
-=======
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -56,7 +53,6 @@ function sendProblem(res, status, title, detail) {
   });
 }
 
-<<<<<<< HEAD
 // Initialize file system storage handler
 const storageHandler = new ImageAndDescriptionHandler('./uploads');
 
@@ -64,17 +60,6 @@ const storageHandler = new ImageAndDescriptionHandler('./uploads');
 const processingState = {
   status: 'idle',
   progress: 0
-=======
-// In-memory storage for demonstration
-const uploadedData = {
-  images: [],
-  descriptions: [],
-  titles: [],
-  processing: {
-    status: 'idle',
-    progress: 0
-  }
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
 };
 
 // Parse OpenAPI paths and register routes
@@ -94,7 +79,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           res.status(200).json({ status: 'operational', message: 'API is healthy' });
         } else if (pathPattern === '/process-images') {
           // Get processing progress
-<<<<<<< HEAD
           const stats = storageHandler.getStatistics();
           res.status(200).json({
             status: processingState.status,
@@ -119,19 +103,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
               text: results.map(r => `${r.title}: ${r.description}`).join(' | '),
               images: results,
               count: results.length
-=======
-          res.status(200).json({
-            status: uploadedData.processing.status,
-            progress: uploadedData.processing.progress,
-            message: `Processing ${uploadedData.images.length} images`
-          });
-        } else if (pathPattern === '/processing-result') {
-          // Retrieve processing result
-          if (uploadedData.processing.status === 'completed') {
-            res.status(200).json({
-              text: 'Generated story from your images and descriptions.',
-              images: uploadedData.images.map((_, idx) => `https://api.server.test/v1/processed-image-${idx}`)
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
             });
           } else {
             sendProblem(res, 404, 'Not Found', 'Processing has not been completed yet');
@@ -164,7 +135,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
               return sendProblem(res, 400, 'Bad Request', 'No images provided');
             }
 
-<<<<<<< HEAD
             try {
               const storedImages = storageHandler.storeImages(req.files);
               res.status(200).json({
@@ -181,14 +151,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
             } catch (storageError) {
               return sendProblem(res, 500, 'Internal Server Error', 'Failed to store images: ' + storageError.message);
             }
-=======
-            uploadedData.images = req.files.map(f => f.originalname);
-            console.log(`Uploaded ${req.files.length} images`);
-            res.status(200).json({
-              message: `Successfully uploaded ${req.files.length} images`,
-              count: req.files.length
-            });
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
           });
           return;
         } else if (pathPattern === '/upload-descriptions') {
@@ -197,7 +159,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
             return sendProblem(res, 400, 'Bad Request', 'descriptions field is required and must be an array');
           }
 
-<<<<<<< HEAD
           try {
             const result = storageHandler.storeDescriptions(req.body.descriptions);
             res.status(200).json({
@@ -210,21 +171,12 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           } catch (storageError) {
             return sendProblem(res, 400, 'Bad Request', storageError.message);
           }
-=======
-          uploadedData.descriptions = req.body.descriptions;
-          console.log(`Uploaded ${req.body.descriptions.length} descriptions`);
-          res.status(200).json({
-            message: `Successfully uploaded ${req.body.descriptions.length} descriptions`,
-            count: req.body.descriptions.length
-          });
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
         } else if (pathPattern === '/upload-titles') {
           // Handle JSON titles
           if (!req.body.titles || !Array.isArray(req.body.titles)) {
             return sendProblem(res, 400, 'Bad Request', 'titles field is required and must be an array');
           }
 
-<<<<<<< HEAD
           try {
             const result = storageHandler.storeTitles(req.body.titles);
             res.status(200).json({
@@ -257,29 +209,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
             if (processingState.progress >= 100) {
               processingState.status = 'completed';
               processingState.progress = 100;
-=======
-          uploadedData.titles = req.body.titles;
-          console.log(`Uploaded ${req.body.titles.length} titles`);
-          res.status(200).json({
-            message: `Successfully uploaded ${req.body.titles.length} titles`,
-            count: req.body.titles.length
-          });
-        } else if (pathPattern === '/process-images') {
-          // Start image processing
-          if (uploadedData.processing.status === 'processing') {
-            return sendProblem(res, 409, 'Conflict', 'Processing is already in progress');
-          }
-
-          uploadedData.processing.status = 'processing';
-          uploadedData.processing.progress = 0;
-
-          // Simulate processing
-          const processingInterval = setInterval(() => {
-            uploadedData.processing.progress += 20;
-            if (uploadedData.processing.progress >= 100) {
-              uploadedData.processing.status = 'completed';
-              uploadedData.processing.progress = 100;
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
               clearInterval(processingInterval);
               console.log('Image processing completed');
             }
@@ -287,12 +216,8 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
           res.status(202).json({
             message: 'Processing started',
-<<<<<<< HEAD
             status: 'processing',
             itemsBeingProcessed: completeItems.length
-=======
-            status: 'processing'
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
           });
         } else {
           sendProblem(res, 404, 'Not Found', `Endpoint ${pathPattern} not implemented`);
@@ -312,7 +237,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
       try {
         if (pathPattern === '/upload-images') {
-<<<<<<< HEAD
           // Abort image upload (clear all stored data)
           storageHandler.clearAll();
           processingState.status = 'idle';
@@ -322,15 +246,6 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           // Abort image processing
           processingState.status = 'idle';
           processingState.progress = 0;
-=======
-          // Abort image upload
-          uploadedData.images = [];
-          res.status(200).json({ message: 'Upload aborted successfully' });
-        } else if (pathPattern === '/process-images') {
-          // Abort image processing
-          uploadedData.processing.status = 'idle';
-          uploadedData.processing.progress = 0;
->>>>>>> 8971765 (added a rudimentary implementation for a node server that handles the http requests)
           res.status(200).json({ message: 'Processing aborted successfully' });
         } else {
           sendProblem(res, 404, 'Not Found', `Endpoint ${pathPattern} not implemented`);
