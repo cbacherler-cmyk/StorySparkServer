@@ -125,66 +125,100 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
       try {
         if (pathPattern === '/upload-images') {
-          // Handle multipart/form-data file upload
-          upload.array('images')(req, res, (err) => {
+          // Handle multipart/form-data file upload with stageId and storyId
+          upload.single('image')(req, res, (err) => {
             if (err) {
               return sendProblem(res, 400, 'Bad Request', 'File upload failed: ' + err.message);
             }
 
-            if (!req.files || req.files.length === 0) {
-              return sendProblem(res, 400, 'Bad Request', 'No images provided');
+            const storyId = req.body?.storyId || req.query?.storyId;
+            const stageId = req.body?.stageId || req.query?.stageId;
+            
+            if (!storyId) {
+              return sendProblem(res, 400, 'Bad Request', 'storyId parameter is required');
+            }
+
+            if (!stageId) {
+              return sendProblem(res, 400, 'Bad Request', 'stageId parameter is required');
+            }
+
+            if (!req.file) {
+              return sendProblem(res, 400, 'Bad Request', 'No image provided');
             }
 
             try {
-              const storedImages = storageHandler.storeImages(req.files);
+              const updatedStage = storageHandler.storeStageImage(storyId, stageId, req.file.buffer, req.file.originalname);
               res.status(200).json({
-                message: `Successfully uploaded and stored ${req.files.length} images`,
-                count: req.files.length,
-                items: storedImages.map(img => ({
-                  id: img.id,
-                  originalName: img.originalName,
-                  size: img.size,
-                  mimeType: img.mimeType,
-                  uploadedAt: img.uploadedAt
-                }))
+                message: 'Image uploaded successfully',
+                storyId,
+                stageId,
+                stage: updatedStage
               });
             } catch (storageError) {
-              return sendProblem(res, 500, 'Internal Server Error', 'Failed to store images: ' + storageError.message);
+              return sendProblem(res, 400, 'Bad Request', storageError.message);
             }
           });
           return;
         } else if (pathPattern === '/upload-descriptions') {
-          // Handle JSON descriptions
-          if (!req.body.descriptions || !Array.isArray(req.body.descriptions)) {
-            return sendProblem(res, 400, 'Bad Request', 'descriptions field is required and must be an array');
+          // Handle JSON descriptions with stageId and storyId
+          const storyId = req.body?.storyId;
+          const stageId = req.body?.stageId;
+          const descriptions = req.body?.descriptions;
+
+          if (!storyId) {
+            return sendProblem(res, 400, 'Bad Request', 'storyId parameter is required');
+          }
+
+          if (!stageId) {
+            return sendProblem(res, 400, 'Bad Request', 'stageId parameter is required');
+          }
+
+          if (!descriptions || !Array.isArray(descriptions) || descriptions.length === 0) {
+            return sendProblem(res, 400, 'Bad Request', 'descriptions field is required and must be a non-empty array');
           }
 
           try {
-            const result = storageHandler.storeDescriptions(req.body.descriptions);
+            // Store the first description for the stage
+            const description = descriptions[0];
+            const updatedStage = storageHandler.storeStageDescription(storyId, stageId, description);
+            
             res.status(200).json({
-              message: `Successfully processed ${req.body.descriptions.length} descriptions`,
-              count: req.body.descriptions.length,
-              stored: result.stored,
-              failed: result.failed,
-              errors: result.errors.length > 0 ? result.errors : undefined
+              message: 'Description uploaded successfully',
+              storyId,
+              stageId,
+              stage: updatedStage
             });
           } catch (storageError) {
             return sendProblem(res, 400, 'Bad Request', storageError.message);
           }
         } else if (pathPattern === '/upload-titles') {
-          // Handle JSON titles
-          if (!req.body.titles || !Array.isArray(req.body.titles)) {
-            return sendProblem(res, 400, 'Bad Request', 'titles field is required and must be an array');
+          // Handle JSON titles with stageId and storyId
+          const storyId = req.body?.storyId;
+          const stageId = req.body?.stageId;
+          const titles = req.body?.titles;
+
+          if (!storyId) {
+            return sendProblem(res, 400, 'Bad Request', 'storyId parameter is required');
+          }
+
+          if (!stageId) {
+            return sendProblem(res, 400, 'Bad Request', 'stageId parameter is required');
+          }
+
+          if (!titles || !Array.isArray(titles) || titles.length === 0) {
+            return sendProblem(res, 400, 'Bad Request', 'titles field is required and must be a non-empty array');
           }
 
           try {
-            const result = storageHandler.storeTitles(req.body.titles);
+            // Store the first title for the stage
+            const title = titles[0];
+            const updatedStage = storageHandler.storeStageTitle(storyId, stageId, title);
+            
             res.status(200).json({
-              message: `Successfully processed ${req.body.titles.length} titles`,
-              count: req.body.titles.length,
-              stored: result.stored,
-              failed: result.failed,
-              errors: result.errors.length > 0 ? result.errors : undefined
+              message: 'Title uploaded successfully',
+              storyId,
+              stageId,
+              stage: updatedStage
             });
           } catch (storageError) {
             return sendProblem(res, 400, 'Bad Request', storageError.message);
@@ -219,6 +253,38 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
             status: 'processing',
             itemsBeingProcessed: completeItems.length
           });
+        } else if (pathPattern === '/generate-new-story') {
+          // Generate a new story with specified number of stages
+          const stages = req.body?.stages || 5;
+
+          // Validate stages parameter
+          if (!Number.isInteger(stages) || stages < 1) {
+            return sendProblem(res, 400, 'Bad Request', 'stages must be a positive integer');
+          }
+
+          try {
+            // Generate unique IDs
+            const generateUUID = () => {
+              return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+            };
+
+            const storyId = generateUUID();
+            const storyStages = Array.from({ length: stages }, (_, index) => ({
+              stageId: generateUUID(),
+              stageNumber: index + 1
+            }));
+
+            // Create story in artifact handler
+            const storyMetadata = storageHandler.createStory(storyId, storyStages);
+            console.log(`Created new story: ${storyId} with ${stages} stages`);
+
+            res.status(201).json({
+              storyId,
+              stages: storyStages
+            });
+          } catch (storageError) {
+            return sendProblem(res, 500, 'Internal Server Error', storageError.message);
+          }
         } else {
           sendProblem(res, 404, 'Not Found', `Endpoint ${pathPattern} not implemented`);
         }

@@ -1,0 +1,53 @@
+{
+  "storyId": "1777741353370-1emzdukky",
+  "totalStages": 5,
+  "stages": {
+    "1777741353370-l1z2nkwiw": {
+      "stageId": "1777741353370-l1z2nkwiw",
+      "stageNumber": 1,
+      "title": null,
+      "image": null,
+      "description": null,
+      "createdAt": "2026-05-02T17:02:33.371Z",
+      "updatedAt": "2026-05-02T17:02:33.377Z"
+    },
+    "1777741353370-gm7nen2de": {
+      "stageId": "1777741353370-gm7nen2de",
+      "stageNumber": 2,
+      "title": null,
+      "image": null,
+      "description": null,
+      "createdAt": "2026-05-02T17:02:33.377Z",
+      "updatedAt": "2026-05-02T17:02:33.377Z"
+    },
+    "1777741353370-yqsiqfz3j": {
+      "stageId": "1777741353370-yqsiqfz3j",
+      "stageNumber": 3,
+      "title": null,
+      "image": null,
+      "description": null,
+      "createdAt": "2026-05-02T17:02:33.377Z",
+      "updatedAt": "2026-05-02T17:02:33.377Z"
+    },
+    "1777741353370-qpmvhwgxt": {
+      "stageId": "1777741353370-qpmvhwgxt",
+      "stageNumber": 4,
+      "title": null,
+      "image": null,
+      "description": null,
+      "createdAt": "2026-05-02T17:02:33.377Z",
+      "updatedAt": "2026-05-02T17:02:33.377Z"
+    },
+    "1777741353370-6zl3uhxzp": {
+      "stageId": "1777741353370-6zl3uhxzp",
+      "stageNumber": 5,
+      "title": null,
+      "image": null,
+      "description": null,
+      "createdAt": "2026-05-02T17:02:33.377Z",
+      "updatedAt": "2026-05-02T17:02:33.377Z"
+    }
+  },
+  "createdAt": "2026-05-02T17:02:33.377Z",
+  "updatedAt": "2026-05-02T17:02:33.377Z"
+}

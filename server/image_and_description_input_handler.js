@@ -1,16 +1,22 @@
 const fs = require('fs');
 const path = require('path');
+const ArtifactIdentificationHandler = require('./artifact_identification_handler');
 
 /**
  * ImageAndDescriptionHandler manages the storage and pairing of images,
- * titles, and descriptions on the file system.
+ * titles, and descriptions on the file system. It integrates with the
+ * ArtifactIdentificationHandler to support story-based artifact organization.
  */
 class ImageAndDescriptionHandler {
-  constructor(baseStoragePath = './uploads') {
+  constructor(baseStoragePath = './uploads', artifactStoragePath = './uploads/artifacts') {
     this.baseStoragePath = path.join(__dirname, baseStoragePath);
     this.imagesDir = path.join(this.baseStoragePath, 'images');
+    this.descriptionsDir = path.join(this.baseStoragePath, 'descriptions');
     this.metadataDir = path.join(this.baseStoragePath, 'metadata');
     this.indexFile = path.join(this.metadataDir, 'index.json');
+
+    // Initialize artifact handler for story-based storage
+    this.artifactHandler = new ArtifactIdentificationHandler(artifactStoragePath);
 
     // Initialize directories
     this.initializeDirectories();
@@ -31,6 +37,11 @@ class ImageAndDescriptionHandler {
     if (!fs.existsSync(this.imagesDir)) {
       fs.mkdirSync(this.imagesDir, { recursive: true });
       console.log(`Created images directory: ${this.imagesDir}`);
+    }
+
+    if (!fs.existsSync(this.descriptionsDir)) {
+      fs.mkdirSync(this.descriptionsDir, { recursive: true });
+      console.log(`Created descriptions directory: ${this.descriptionsDir}`);
     }
 
     if (!fs.existsSync(this.metadataDir)) {
@@ -205,6 +216,12 @@ class ImageAndDescriptionHandler {
         if (idx < itemsWithoutDescriptions.length) {
           const item = itemsWithoutDescriptions[idx];
           item.description = description.trim();
+          
+          // Store description as a separate file in descriptions directory
+          const descriptionFileName = `${item.id}.txt`;
+          const descriptionFilePath = path.join(this.descriptionsDir, descriptionFileName);
+          fs.writeFileSync(descriptionFilePath, item.description, 'utf-8');
+          
           results.stored++;
           console.log(`Stored description for ${item.id}: "${description.substring(0, 50)}..."`);
         } else {
@@ -313,6 +330,11 @@ class ImageAndDescriptionHandler {
         fs.rmSync(this.imagesDir, { recursive: true });
       }
 
+      // Delete descriptions
+      if (fs.existsSync(this.descriptionsDir)) {
+        fs.rmSync(this.descriptionsDir, { recursive: true });
+      }
+
       // Delete metadata
       if (fs.existsSync(this.metadataDir)) {
         fs.rmSync(this.metadataDir, { recursive: true });
@@ -350,6 +372,105 @@ class ImageAndDescriptionHandler {
       ...item,
       imagePath: this.getImagePath(item.id)
     }));
+  }
+
+  /**
+   * Get the artifact identification handler for story-based operations
+   * @returns {ArtifactIdentificationHandler} The artifact handler instance
+   */
+  getArtifactHandler() {
+    return this.artifactHandler;
+  }
+
+  /**
+   * Create a new story with stages in the artifact handler
+   * @param {string} storyId - Unique story ID
+   * @param {Array} storyStages - Array of stage objects with { stageId, stageNumber }
+   * @returns {Object} Created story metadata
+   */
+  createStory(storyId, storyStages) {
+    return this.artifactHandler.createStory(storyId, storyStages);
+  }
+
+  /**
+   * Store a title for a story stage
+   * @param {string} storyId - Story ID
+   * @param {string} stageId - Stage ID
+   * @param {string} title - Title text
+   * @returns {Object} Updated stage metadata
+   */
+  storeStageTitle(storyId, stageId, title) {
+    return this.artifactHandler.storeTitle(storyId, stageId, title);
+  }
+
+  /**
+   * Store an image for a story stage
+   * @param {string} storyId - Story ID
+   * @param {string} stageId - Stage ID
+   * @param {Buffer} imageBuffer - Image file buffer
+   * @param {string} originalFileName - Original file name
+   * @returns {Object} Updated stage metadata
+   */
+  storeStageImage(storyId, stageId, imageBuffer, originalFileName) {
+    return this.artifactHandler.storeImage(storyId, stageId, imageBuffer, originalFileName);
+  }
+
+  /**
+   * Store a description for a story stage
+   * @param {string} storyId - Story ID
+   * @param {string} stageId - Stage ID
+   * @param {string} description - Description text
+   * @returns {Object} Updated stage metadata
+   */
+  storeStageDescription(storyId, stageId, description) {
+    return this.artifactHandler.storeDescription(storyId, stageId, description);
+  }
+
+  /**
+   * Retrieve a story with all its stages and artifacts
+   * @param {string} storyId - Story ID
+   * @returns {Object} Complete story metadata
+   */
+  retrieveStory(storyId) {
+    return this.artifactHandler.getStory(storyId);
+  }
+
+  /**
+   * Retrieve a specific stage for a story
+   * @param {string} storyId - Story ID
+   * @param {string} stageId - Stage ID
+   * @returns {Object} Stage metadata
+   */
+  retrieveStage(storyId, stageId) {
+    return this.artifactHandler.getStage(storyId, stageId);
+  }
+
+  /**
+   * Retrieve all complete stages for a story
+   * @param {string} storyId - Story ID
+   * @returns {Array} Array of complete stages
+   */
+  retrieveCompleteStages(storyId) {
+    return this.artifactHandler.getCompleteStages(storyId);
+  }
+
+  /**
+   * Retrieve all incomplete stages for a story
+   * @param {string} storyId - Story ID
+   * @returns {Array} Array of incomplete stages
+   */
+  retrieveIncompleteStages(storyId) {
+    return this.artifactHandler.getIncompleteStages(storyId);
+  }
+
+  /**
+   * Check if a stage is complete
+   * @param {string} storyId - Story ID
+   * @param {string} stageId - Stage ID
+   * @returns {boolean} True if stage has all artifacts
+   */
+  isStageComplete(storyId, stageId) {
+    return this.artifactHandler.isStageComplete(storyId, stageId);
   }
 }
 
