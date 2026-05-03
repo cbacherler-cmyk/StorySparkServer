@@ -223,7 +223,8 @@ class ArtifactIdentificationHandler {
 
     try {
       // Remove existing image if any
-      const existingImages = fs.readdirSync(stageDir).filter(f => f.startsWith('image.'));
+      // Match files named 'image' or 'image.*' (e.g., image.jpg, image.png)
+      const existingImages = fs.readdirSync(stageDir).filter(f => /^image(\.|$)/.test(f));
       existingImages.forEach(img => {
         fs.unlinkSync(path.join(stageDir, img));
       });

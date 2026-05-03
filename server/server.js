@@ -4,6 +4,7 @@ const path = require('path');
 const yaml = require('js-yaml');
 const multer = require('multer');
 const ImageAndDescriptionHandler = require('./image_and_description_input_handler');
+const UserHandler = require('./user_handling');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -53,16 +54,170 @@ function sendProblem(res, status, title, detail) {
   });
 }
 
-// Initialize file system storage handler
+// Initialize user handler
+const userHandler = new UserHandler('./uploads');
+
+// Global storage handler (for backward compatibility, but used only for unauthenticated operations)
 const storageHandler = new ImageAndDescriptionHandler('./uploads');
 
-// Processing state
-const processingState = {
-  status: 'idle',
-  progress: 0
-};
+// Per-user storage handlers
+const userStorageHandlers = new Map(); // userId -> storageHandler
+
+// Processing state (per user)
+const processingState = new Map(); // userId -> { status, progress }
+
+/**
+ * Middleware to authenticate requests using session token
+ */
+function authenticateRequest(req, res, next) {
+  // Skip authentication for public endpoints
+  const publicEndpoints = ['/test', '/register', '/login'];
+  if (publicEndpoints.includes(req.path)) {
+    return next();
+  }
+
+  const sessionToken = req.headers['x-session-token'] || req.body?.sessionToken || req.query?.sessionToken;
+  
+  if (!sessionToken) {
+    return sendProblem(res, 401, 'Unauthorized', 'Session token is required');
+  }
+
+  const session = userHandler.verifySession(sessionToken);
+  if (!session) {
+    return sendProblem(res, 401, 'Unauthorized', 'Invalid or expired session token');
+  }
+
+  // Attach session to request
+  req.user = session;
+  next();
+}
+
+// Apply authentication middleware
+app.use(authenticateRequest);
+
+/**
+ * Get or create user-specific storage handler
+ */
+function getUserStorageHandler(userId) {
+  if (!userStorageHandlers.has(userId)) {
+    // User storage path for images/descriptions (legacy structure)
+    const userStoragePath = `./uploads/users/${userId}/artifacts`;
+    // User-scoped artifact/story storage (ArtifactIdentificationHandler will create 'stories' subdirectory)
+    const userArtifactPath = `./uploads/users/${userId}`;
+    const handler = new ImageAndDescriptionHandler(userStoragePath, userArtifactPath);
+    userStorageHandlers.set(userId, handler);
+  }
+  return userStorageHandlers.get(userId);
+}
+
+/**
+ * Get user processing state
+ */
+function getUserProcessingState(userId) {
+  if (!processingState.has(userId)) {
+    processingState.set(userId, { status: 'idle', progress: 0 });
+  }
+  return processingState.get(userId);
+}
 
 // Parse OpenAPI paths and register routes
+
+// ===== AUTHENTICATION ENDPOINTS =====
+// These are handled manually, not through OpenAPI parsing
+
+/**
+ * POST /register - Register a new user
+ */
+app.post('/register', (req, res) => {
+  console.log('[POST] /register');
+  addRateLimitHeaders(res);
+
+  try {
+    const { username, email, password } = req.body;
+
+    if (!username || !email || !password) {
+      return sendProblem(res, 400, 'Bad Request', 'username, email, and password are required');
+    }
+
+    const result = userHandler.registerUser(username, email, password);
+    res.status(201).json(result);
+  } catch (error) {
+    console.error('Error during registration:', error);
+    const status = error.message.includes('already exists') ? 409 : 400;
+    sendProblem(res, status, 'Bad Request', error.message);
+  }
+});
+
+/**
+ * POST /login - Login a user
+ */
+app.post('/login', (req, res) => {
+  console.log('[POST] /login');
+  addRateLimitHeaders(res);
+
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      return sendProblem(res, 400, 'Bad Request', 'username and password are required');
+    }
+
+    const result = userHandler.loginUser(username, password);
+    res.status(200).json(result);
+  } catch (error) {
+    console.error('Error during login:', error);
+    sendProblem(res, 401, 'Unauthorized', error.message);
+  }
+});
+
+/**
+ * POST /logout - Logout a user
+ */
+app.post('/logout', (req, res) => {
+  console.log('[POST] /logout');
+  addRateLimitHeaders(res);
+
+  try {
+    const sessionToken = req.headers['x-session-token'] || req.body?.sessionToken;
+
+    if (!sessionToken) {
+      return sendProblem(res, 400, 'Bad Request', 'Session token is required');
+    }
+
+    const success = userHandler.logoutUser(sessionToken);
+    if (success) {
+      res.status(200).json({ message: 'Logout successful' });
+    } else {
+      sendProblem(res, 400, 'Bad Request', 'Invalid session token');
+    }
+  } catch (error) {
+    console.error('Error during logout:', error);
+    sendProblem(res, 500, 'Internal Server Error', error.message);
+  }
+});
+
+/**
+ * GET /user/profile - Get current user profile
+ */
+app.get('/user/profile', (req, res) => {
+  console.log('[GET] /user/profile');
+  addRateLimitHeaders(res);
+
+  try {
+    if (!req.user) {
+      return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+    }
+
+    const userInfo = userHandler.getUserInfo(req.user.userId);
+    res.status(200).json(userInfo);
+  } catch (error) {
+    console.error('Error getting user profile:', error);
+    sendProblem(res, 500, 'Internal Server Error', error.message);
+  }
+});
+
+// ===== OPENAPI ROUTES =====
+
 Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
   // Convert OpenAPI path pattern to Express pattern (e.g., {id} -> :id)
   const expressPath = pathPattern.replace(/{([^}]+)}/g, ':$1');
@@ -79,18 +234,32 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           res.status(200).json({ status: 'operational', message: 'API is healthy' });
         } else if (pathPattern === '/process-images') {
           // Get processing progress
-          const stats = storageHandler.getStatistics();
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
+          const userHandler_instance = getUserStorageHandler(req.user.userId);
+          const userState = getUserProcessingState(req.user.userId);
+          const stats = userHandler_instance.getStatistics();
+          
           res.status(200).json({
-            status: processingState.status,
-            progress: processingState.progress,
+            status: userState.status,
+            progress: userState.progress,
             message: `Processing ${stats.totalItems} images`,
             itemsReady: stats.completeItems,
             itemsIncomplete: stats.incompleteItems
           });
         } else if (pathPattern === '/processing-result') {
           // Retrieve processing result
-          if (processingState.status === 'completed') {
-            const completeItems = storageHandler.getCompleteItems();
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
+          const userHandler_instance = getUserStorageHandler(req.user.userId);
+          const userState = getUserProcessingState(req.user.userId);
+          
+          if (userState.status === 'completed') {
+            const completeItems = userHandler_instance.getCompleteItems();
             const results = completeItems.map(item => ({
               id: item.id,
               title: item.title,
@@ -125,8 +294,12 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
       try {
         if (pathPattern === '/upload-images') {
-          // Handle multipart/form-data file upload with stageId and storyId
-          upload.single('image')(req, res, (err) => {
+          // Handle multipart/form-data file upload with stageId and storyId (multiple images)
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
+          upload.array('images')(req, res, (err) => {
             if (err) {
               return sendProblem(res, 400, 'Bad Request', 'File upload failed: ' + err.message);
             }
@@ -142,16 +315,24 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
               return sendProblem(res, 400, 'Bad Request', 'stageId parameter is required');
             }
 
-            if (!req.file) {
-              return sendProblem(res, 400, 'Bad Request', 'No image provided');
+            if (!req.files || req.files.length === 0) {
+              return sendProblem(res, 400, 'Bad Request', 'No images provided');
             }
 
             try {
-              const updatedStage = storageHandler.storeStageImage(storyId, stageId, req.file.buffer, req.file.originalname);
+              // Store each image for the stage
+              // Note: Multiple images for the same stage will overwrite, so we store the last one
+              const userStorageHandler = getUserStorageHandler(req.user.userId);
+              let updatedStage;
+              for (const file of req.files) {
+                updatedStage = userStorageHandler.storeStageImage(storyId, stageId, file.buffer, file.originalname);
+              }
+              
               res.status(200).json({
-                message: 'Image uploaded successfully',
+                message: `${req.files.length} image(s) uploaded successfully`,
                 storyId,
                 stageId,
+                imagesCount: req.files.length,
                 stage: updatedStage
               });
             } catch (storageError) {
@@ -161,6 +342,10 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           return;
         } else if (pathPattern === '/upload-descriptions') {
           // Handle JSON descriptions with stageId and storyId
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
           const storyId = req.body?.storyId;
           const stageId = req.body?.stageId;
           const descriptions = req.body?.descriptions;
@@ -180,7 +365,8 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           try {
             // Store the first description for the stage
             const description = descriptions[0];
-            const updatedStage = storageHandler.storeStageDescription(storyId, stageId, description);
+            const userStorageHandler = getUserStorageHandler(req.user.userId);
+            const updatedStage = userStorageHandler.storeStageDescription(storyId, stageId, description);
             
             res.status(200).json({
               message: 'Description uploaded successfully',
@@ -193,6 +379,10 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           }
         } else if (pathPattern === '/upload-titles') {
           // Handle JSON titles with stageId and storyId
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
           const storyId = req.body?.storyId;
           const stageId = req.body?.stageId;
           const titles = req.body?.titles;
@@ -212,7 +402,8 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           try {
             // Store the first title for the stage
             const title = titles[0];
-            const updatedStage = storageHandler.storeStageTitle(storyId, stageId, title);
+            const userStorageHandler = getUserStorageHandler(req.user.userId);
+            const updatedStage = userStorageHandler.storeStageTitle(storyId, stageId, title);
             
             res.status(200).json({
               message: 'Title uploaded successfully',
@@ -225,26 +416,32 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           }
         } else if (pathPattern === '/process-images') {
           // Start image processing
-          if (processingState.status === 'processing') {
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
+          const userState = getUserProcessingState(req.user.userId);
+          if (userState.status === 'processing') {
             return sendProblem(res, 409, 'Conflict', 'Processing is already in progress');
           }
 
-          const completeItems = storageHandler.getCompleteItems();
+          const userStorageHandler = getUserStorageHandler(req.user.userId);
+          const completeItems = userStorageHandler.getCompleteItems();
           if (completeItems.length === 0) {
             return sendProblem(res, 400, 'Bad Request', 'No complete items (images with titles and descriptions) available for processing');
           }
 
-          processingState.status = 'processing';
-          processingState.progress = 0;
+          userState.status = 'processing';
+          userState.progress = 0;
 
           // Simulate processing
           const processingInterval = setInterval(() => {
-            processingState.progress += 20;
-            if (processingState.progress >= 100) {
-              processingState.status = 'completed';
-              processingState.progress = 100;
+            userState.progress += 20;
+            if (userState.progress >= 100) {
+              userState.status = 'completed';
+              userState.progress = 100;
               clearInterval(processingInterval);
-              console.log('Image processing completed');
+              console.log(`Image processing completed for user ${req.user.userId}`);
             }
           }, 2000);
 
@@ -255,6 +452,10 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
           });
         } else if (pathPattern === '/generate-new-story') {
           // Generate a new story with specified number of stages
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
           const stages = req.body?.stages || 5;
 
           // Validate stages parameter
@@ -275,8 +476,9 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
             }));
 
             // Create story in artifact handler
-            const storyMetadata = storageHandler.createStory(storyId, storyStages);
-            console.log(`Created new story: ${storyId} with ${stages} stages`);
+            const userStorageHandler = getUserStorageHandler(req.user.userId);
+            const storyMetadata = userStorageHandler.createStory(storyId, storyStages);
+            console.log(`Created new story for user ${req.user.userId}: ${storyId} with ${stages} stages`);
 
             res.status(201).json({
               storyId,
@@ -303,15 +505,28 @@ Object.entries(openapi.paths).forEach(([pathPattern, pathItem]) => {
 
       try {
         if (pathPattern === '/upload-images') {
-          // Abort image upload (clear all stored data)
-          storageHandler.clearAll();
-          processingState.status = 'idle';
-          processingState.progress = 0;
+          // Abort image upload (clear all stored data for the user)
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
+          const userStorageHandler = getUserStorageHandler(req.user.userId);
+          userStorageHandler.clearAll();
+          
+          const userState = getUserProcessingState(req.user.userId);
+          userState.status = 'idle';
+          userState.progress = 0;
+          
           res.status(200).json({ message: 'All uploads cleared successfully' });
         } else if (pathPattern === '/process-images') {
           // Abort image processing
-          processingState.status = 'idle';
-          processingState.progress = 0;
+          if (!req.user) {
+            return sendProblem(res, 401, 'Unauthorized', 'Authentication required');
+          }
+
+          const userState = getUserProcessingState(req.user.userId);
+          userState.status = 'idle';
+          userState.progress = 0;
           res.status(200).json({ message: 'Processing aborted successfully' });
         } else {
           sendProblem(res, 404, 'Not Found', `Endpoint ${pathPattern} not implemented`);
